@@ -1,0 +1,14 @@
+# Normalise line endings in the repository to LF.
+#
+# This is not cosmetic. `action.yml` and the CI workflow carry `run: |` shell
+# blocks with heredocs, and those execute on Linux runners. A CRLF line ending
+# inside one produces `bash: $'\r': command not found` -- a failure that cannot
+# be reproduced on the Windows machine that committed it.
+* text=auto eol=lf
+
+# Binary files git must not touch.
+*.pdf binary
+*.sqlite binary
+*.db binary
+*.png binary
+*.jpg binary

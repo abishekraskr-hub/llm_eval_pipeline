@@ -1,0 +1,80 @@
+# The quickstart, and the library's own integration test.
+#
+# Everything here is app-specific. The library reads this file and holds no
+# knowledge of the app at all -- which is what lets the same package gate a
+# medical RAG bot and a SQL-backed support agent without either editing library
+# code.
+#
+#     llmeval validate --config examples/echo_target/llmeval.yaml
+#     llmeval run      --config examples/echo_target/llmeval.yaml --branch develop
+#
+# No API key, no network, no database. Every relative path below resolves from
+# THIS file's folder, not from wherever you run the command.
+version: 1
+
+target:
+  type: python
+  # module:Class, imported with this file's folder on sys.path.
+  entry: eval.echo_target:EchoTarget
+
+dataset: eval/golden.yaml
+
+refusal:
+  # The echo target reports `refused` itself, so that is believed outright. No
+  # pattern can be as accurate as the app saying which branch it took.
+  use_target_flag: true
+  # The fallback, for an app that cannot report a flag. Case-insensitive regex.
+  patterns:
+    - "not covered by the available documents"
+    - "^that is not covered"
+
+judge:
+  # `fake` makes NO network calls: deterministic scores from a hash. It is what
+  # lets CI exercise the whole pipeline on every push without a key and without
+  # spending anything. Its scores are not measurements, and a fake run can never
+  # be a real run's baseline -- the provider feeds the comparability hash.
+  #
+  # A real app uses groq or gemini here.
+  provider: fake
+
+storage:
+  # sqlite: a single file, no server. The example must run on a clean machine.
+  backend: sqlite
+  sqlite_path: .llmeval/history.sqlite
+  reports: .llmeval/reports
+
+retrieval:
+  k: 5
+  page_tolerance: 0
+
+paired:
+  enabled: true
+  base_branch: develop
+
+thresholds:
+  # Every question must get an answer. Needs no judge, so unlike the metrics
+  # below it cannot itself go missing -- which is why it is first.
+  answered_rate:        { floor: 1.00, type: binary,     direction: higher_is_better }
+
+  faithfulness:         { floor: 0.75, type: continuous, direction: higher_is_better }
+  answer_relevance:     { floor: 0.75, type: continuous, direction: higher_is_better }
+  hallucination_rate:   { floor: 0.25, type: binary,     direction: lower_is_better }
+
+  # Both sides of the refusal coin. abstention_rate alone is gameable: an app
+  # that refuses EVERYTHING scores a perfect 1.0 on it. Gate one without the
+  # other and the pair means nothing.
+  abstention_rate:      { floor: 0.70, type: binary,     direction: higher_is_better }
+  false_refusal_rate:   { floor: 0.20, type: binary,     direction: lower_is_better }
+
+  # `@k` is a template resolved from retrieval.k above, so k lives in one place.
+  retrieval_hit_rate@k: { floor: 0.70, type: binary,     direction: higher_is_better }
+  retrieval_recall@k:   { floor: 0.60, type: continuous, direction: higher_is_better }
+  retrieval_mrr:        { floor: 0.50, type: continuous, direction: higher_is_better }
+
+# Fail rather than report green when a declared metric could not be measured.
+require_all_metrics: true
+
+# And fail when a metric was measured on only PART of the items it applies to.
+# Unmeasured items are excluded from the mean, so without this a question the
+# app failed to answer makes the average look better rather than worse.
+min_metric_coverage: 0.9

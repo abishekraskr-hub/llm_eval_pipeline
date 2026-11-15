@@ -1,0 +1,245 @@
+name: "LLM evaluation gate"
+description: >-
+  Run a golden-dataset evaluation against your LLM app and block the PR if
+  answer quality got worse. Compares against the last passing run on the base
+  branch.
+author: "abishekraskr-hub"
+
+branding:
+  icon: "check-circle"
+  color: "purple"
+
+inputs:
+  config:
+    description: "Path to llmeval.yaml, relative to the repository root."
+    required: false
+    default: "llmeval.yaml"
+  base-branch:
+    description: >-
+      The branch whose last PASSING run is the baseline. Defaults to the PR's
+      target branch, or the current branch on a push.
+    required: false
+    default: ${{ github.base_ref || github.ref_name }}
+  comment:
+    description: "Post the report as a single, updating PR comment."
+    required: false
+    default: "true"
+  github-token:
+    description: "Token used to download the baseline and post the comment."
+    required: false
+    default: ${{ github.token }}
+  python-version:
+    required: false
+    default: "3.12"
+
+outputs:
+  exit-code:
+    description: "0 pass, 1 gate failed, 2 bad config, 3 could not complete."
+    value: ${{ steps.eval.outputs.exit_code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install llm_eval_pipeline
+      shell: bash
+      # Installed from the action's OWN checkout, so the library version always
+      # equals the action tag -- they cannot drift apart. It also means no PAT is
+      # needed even when the library repo is private, because Actions has
+      # already checked the action out.
+      run: |
+        python -m pip install --upgrade pip
+        pip install "${{ github.action_path }}"
+        llmeval --version
+
+    - name: Restore the baseline run history
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      # The paired gate compares this run to the last PASSING run on the base
+      # branch, and that history lives in the SQLite file. A runner starts empty,
+      # so without this every PR would report "no comparable baseline" forever.
+      #
+      # Only used by the sqlite backend. With a hosted Postgres the history is
+      # already there and this step finds nothing, which is not an error.
+      run: |
+        db_path="$(python - <<'PY'
+        import os
+        from llm_eval_pipeline.config import load_config
+        from llm_eval_pipeline.storage import resolve_backend, sqlite_path
+        cfg = load_config(os.environ["LLMEVAL_CONFIG"])
+        print(sqlite_path(cfg) if resolve_backend(cfg) == "sqlite" else "")
+        PY
+        )"
+        if [ -z "$db_path" ]; then
+          echo "Postgres backend: history is in the database, nothing to restore."
+          exit 0
+        fi
+        echo "db_path=$db_path" >> "$GITHUB_ENV"
+
+        run_id="$(gh run list \
+          --workflow "${{ github.workflow }}" \
+          --branch "${{ inputs.base-branch }}" \
+          --status success --limit 1 \
+          --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
+        if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+          echo "::notice::No successful run on '${{ inputs.base-branch }}' yet. The"\
+               "paired test will be skipped and the absolute floors carry the gate."
+          exit 0
+        fi
+        mkdir -p "$(dirname "$db_path")"
+        if gh run download "$run_id" -n llmeval-history -D /tmp/llmeval-baseline 2>/dev/null; then
+          found="$(find /tmp/llmeval-baseline -name '*.sqlite*' -o -name '*.db' | head -1)"
+          if [ -n "$found" ]; then
+            cp "$found" "$db_path"
+            echo "Baseline restored from run $run_id."
+          fi
+        else
+          echo "::notice::Run $run_id has no llmeval-history artifact (it may have expired)."
+        fi
+      env:
+        LLMEVAL_CONFIG: ${{ inputs.config }}
+
+    - name: Check the judge's API key is present
+      shell: bash
+      # A fork PR cannot see secrets. That must WARN and exit 3, never pass
+      # silently -- a green check on an evaluation that never ran is worse than
+      # no check at all.
+      run: |
+        key_env="$(python - <<'PY'
+        import os
+        from llm_eval_pipeline.config import load_config
+        cfg = load_config(os.environ["LLMEVAL_CONFIG"])
+        judge = cfg.get("judge") or {}
+        provider = str(judge.get("provider") or "").lower()
+        if provider == "fake":
+            print("")          # the fake judge needs no key
+        else:
+            print(judge.get("api_key_env") or {"groq": "GROQ_API_KEY"}.get(provider, "GEMINI_API_KEY"))
+        PY
+        )"
+        if [ -z "$key_env" ]; then
+          echo "judge needs no API key."
+        elif [ -z "${!key_env}" ]; then
+          echo "::warning::\$$key_env is not set, so the evaluation cannot run."\
+               "On a fork PR this is expected: secrets are not exposed. Re-run"\
+               "from a branch in this repository."
+          echo "skip=1" >> "$GITHUB_ENV"
+        else
+          echo "\$$key_env is set."
+        fi
+      env:
+        LLMEVAL_CONFIG: ${{ inputs.config }}
+
+    - name: Validate the config
+      if: env.skip != '1'
+      shell: bash
+      run: llmeval validate --config "${{ inputs.config }}"
+
+    - name: Run the evaluation
+      id: eval
+      if: env.skip != '1'
+      shell: bash
+      # `set +e` because the exit code IS the result, and each value means
+      # something different. Letting bash abort here would collapse all of them
+      # into "the step failed".
+      run: |
+        set +e
+        llmeval run \
+          --config "${{ inputs.config }}" \
+          --branch "${{ github.head_ref || github.ref_name }}" \
+          --base-branch "${{ inputs.base-branch }}" \
+          --label "${{ github.event_name }}@${{ github.sha }}" \
+          --summary-out "$GITHUB_STEP_SUMMARY" \
+          | tee /tmp/llmeval-stdout.txt
+        code=${PIPESTATUS[0]}
+        set -e
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+        report="$(ls -t ./**/run_*.md 2>/dev/null | head -1 || true)"
+        [ -z "$report" ] && report="$(find . -name 'run_*.md' -newermt '-10 minutes' | head -1 || true)"
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+
+    - name: Comment on the pull request
+      if: >-
+        env.skip != '1' && inputs.comment == 'true'
+        && github.event_name == 'pull_request'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      # ONE comment, updated in place. A new comment per push turns a busy PR
+      # into a wall of stale verdicts, and the newest is the only one that is
+      # true. The HTML marker is how the existing comment is found again.
+      run: |
+        marker='<!-- llmeval-report -->'
+        report="${{ steps.eval.outputs.report }}"
+        {
+          echo "$marker"
+          if [ -n "$report" ] && [ -f "$report" ]; then
+            cat "$report"
+          else
+            echo "## LLM evaluation"
+            echo
+            echo "No report was produced. Exit code \`${{ steps.eval.outputs.exit_code }}\`."
+            echo
+            echo '```'
+            tail -40 /tmp/llmeval-stdout.txt 2>/dev/null || true
+            echo '```'
+          fi
+        } > /tmp/llmeval-comment.md
+
+        existing="$(gh api "repos/${{ github.repository }}/issues/${{ github.event.number }}/comments" \
+          --paginate --jq "[.[] | select(.body | contains(\"$marker\"))] | .[0].id" 2>/dev/null || true)"
+
+        if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+          gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$existing" \
+            -F body=@/tmp/llmeval-comment.md >/dev/null
+          echo "Updated comment $existing."
+        else
+          gh api -X POST "repos/${{ github.repository }}/issues/${{ github.event.number }}/comments" \
+            -F body=@/tmp/llmeval-comment.md >/dev/null
+          echo "Posted a new comment."
+        fi
+
+    - name: Save the run history as the next baseline
+      # Only a push to the base branch writes the shared history. A PR's own
+      # numbers must never become the baseline other PRs are judged against: the
+      # baseline has to be a state that was actually integrated.
+      if: >-
+        env.skip != '1' && github.event_name == 'push'
+        && steps.eval.outputs.exit_code == '0' && env.db_path != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: llmeval-history
+        path: ${{ env.db_path }}
+        retention-days: 90
+        if-no-files-found: warn
+
+    - name: Upload the reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: llmeval-reports
+        path: |
+          **/run_*.md
+          **/run_*.json
+        retention-days: 30
+        if-no-files-found: ignore
+
+    - name: Apply the gate
+      shell: bash
+      # The exit codes carry the meaning, and only 1 and 2 block. Treating a
+      # quota wall or an outage as a quality failure is how a team learns to
+      # ignore a red pipeline.
+      run: |
+        case "${{ steps.eval.outputs.exit_code }}" in
+          0) echo "Evaluation passed." ;;
+          1) echo "::error::Quality gate FAILED -- see the job summary. Merge blocked."; exit 1 ;;
+          2) echo "::error::Invalid llmeval config or usage. Not a quality verdict, but it still blocks."; exit 1 ;;
+          3) echo "::warning::Evaluation could not complete (quota, outage or missing key). Not a quality verdict; re-run when it clears." ;;
+          "") echo "::warning::Evaluation was skipped (no API key available)." ;;
+          *) echo "::error::Unexpected exit code '${{ steps.eval.outputs.exit_code }}'."; exit 1 ;;
+        esac

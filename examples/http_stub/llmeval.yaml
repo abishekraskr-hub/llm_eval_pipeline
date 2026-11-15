@@ -1,0 +1,79 @@
+# Evaluating an app over HTTP, in any language, without changing its API.
+#
+#     llmeval run --config examples/http_stub/llmeval.yaml --branch develop
+#
+# `app_server.py` speaks its own field names -- `query`, `reply`, `sources`,
+# `url`, `text`, `meta.refused` -- and none of them are what this library calls
+# things. The `request:` and `response:` blocks below map them, so the app needs
+# no change and no knowledge that an evaluator exists.
+#
+# `start:` launches the server and waits for its health check, so this is one
+# command rather than a shell script that starts a process, sleeps, and hopes.
+version: 1
+
+target:
+  type: http
+  url: http://127.0.0.1:8077/chat
+  method: POST
+  timeout_s: 30
+  # One retry covers a cold start. A 4xx is never retried -- it would fail
+  # identically and only burn the budget.
+  retries: 1
+
+  # Example of a secret done correctly. `${VAR}` is expanded from the
+  # environment at run time, and a literal-looking key here is REFUSED, because
+  # a key in a config file ends up in git history.
+  #   headers:
+  #     Authorization: "Bearer ${MYAPP_TOKEN}"
+
+  request:
+    # The app expects {"query": "..."} rather than {"question": "..."}.
+    question_field: query
+
+  response:
+    # Dot-paths into the reply. Nested works: `meta.refused`.
+    answer: reply
+    retrieved: sources
+    source_id: url       # these are URLs, not filenames -- any stable id works
+    content: text        # REQUIRED for faithfulness: the text the app used
+    page: page
+    refused: meta.refused
+
+  start:
+    command: "python app_server.py 8077"
+    health_url: http://127.0.0.1:8077/health
+    startup_timeout_s: 30
+
+dataset: golden.yaml
+
+refusal:
+  # The app reports `meta.refused`, mapped above, so that is believed outright.
+  use_target_flag: true
+  patterns:
+    - "documentation does not cover"
+
+judge:
+  provider: fake
+
+storage:
+  backend: sqlite
+  sqlite_path: .llmeval/history.sqlite
+  reports: .llmeval/reports
+
+retrieval:
+  k: 5
+
+paired:
+  enabled: true
+  base_branch: develop
+
+thresholds:
+  answered_rate:        { floor: 1.00, type: binary,     direction: higher_is_better }
+  faithfulness:         { floor: 0.75, type: continuous, direction: higher_is_better }
+  answer_relevance:     { floor: 0.75, type: continuous, direction: higher_is_better }
+  abstention_rate:      { floor: 0.70, type: binary,     direction: higher_is_better }
+  false_refusal_rate:   { floor: 0.20, type: binary,     direction: lower_is_better }
+  retrieval_hit_rate@k: { floor: 0.70, type: binary,     direction: higher_is_better }
+
+require_all_metrics: true
+min_metric_coverage: 0.9

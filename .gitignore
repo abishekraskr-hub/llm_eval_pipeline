@@ -1,0 +1,45 @@
+# Virtualenvs
+.venv/
+venv/
+llm_eval_pip/
+
+# Secrets. .env.example is tracked; nothing else matching .env is.
+.env
+.env.*
+!.env.example
+
+# Run history and generated reports -- artifacts of a run, not source.
+.llmeval/
+*.sqlite
+*.sqlite3
+*.db
+reports/
+run_*.md
+run_*.json
+
+# Derived vector index (rebuilt by the app's ingest step)
+chroma/
+chroma*/
+data/chroma/
+data/index.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Tooling scratch
+.pytest_cache/
+.deepeval/
+.deepeval_telemetry.txt
+temp_test_run_data.json
+
+# Editors / OS
+.streamlit/secrets.toml
+.DS_Store
+Thumbs.db
+
+# Build metadata from an editable install
+*.egg-info/

@@ -1,0 +1,98 @@
+name: ci
+
+# The library's own tests. Deliberately needs NO secrets and makes ZERO model
+# calls: the judge in both examples is `fake`, which is deterministic and
+# offline. A test suite that needed a live key would be run once and then never
+# again, and this one has to run on every push.
+on:
+  push:
+    branches: [develop]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # The live-Postgres tests skip themselves when no server answers, but
+      # being explicit means a hosted database can never be reached by accident
+      # from CI and have scratch schemas created in it.
+      EVAL_SKIP_PG_TESTS: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Unit tests
+        run: pytest -q
+
+      # The quickstart in the README is also the integration test. If these two
+      # steps fail, the first thing a new user is told to run is broken.
+      - name: Validate the examples
+        run: |
+          llmeval validate --config examples/echo_target/llmeval.yaml
+          llmeval validate --config examples/http_stub/llmeval.yaml
+
+      - name: Run the python example
+        run: llmeval run --config examples/echo_target/llmeval.yaml --branch develop
+
+      - name: Run the http example
+        # Exercises `start`, the health poll and the response field mapping --
+        # the path that lets a non-Python app be evaluated at all.
+        run: llmeval run --config examples/http_stub/llmeval.yaml --branch develop
+
+      # A gate that has only ever been seen to pass is not known to work.
+      - name: Prove the gate fails on a known-bad app
+        run: |
+          set +e
+          llmeval run --config examples/echo_target/llmeval.yaml \
+            --branch develop --stub refuse_everything
+          code=$?
+          set -e
+          if [ "$code" != "1" ]; then
+            echo "::error::expected exit 1 (quality gate failed), got $code"
+            exit 1
+          fi
+          echo "Gate correctly failed with exit 1."
+
+      - name: The library must not depend on any app
+        # The grep that keeps this package reusable. `chromadb`, `streamlit` and
+        # PDF handling belong to whichever app is under test; a single import
+        # here would make the library usable only for apps built the same way.
+        run: |
+          if grep -rEin "chroma|streamlit|RAG_Application" llm_eval_pipeline/; then
+            echo "::error::the library references an application"
+            exit 1
+          fi
+          echo "No application references found."
+
+      - name: Build the wheel
+        run: |
+          pip install --quiet build
+          python -m build
+          ls -l dist/
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: llmeval-example-reports
+          path: examples/*/.llmeval/reports/
+          retention-days: 14
+          if-no-files-found: ignore

@@ -1,0 +1,37 @@
+# Gold labels for a web-documentation app: the source_id is a URL, not a
+# filename. Nothing in the library cares which, as long as the app reports the
+# same id.
+items:
+  - id: inv-001
+    question: When are invoices issued?
+    kind: answerable
+    expected_answer: On the first working day of each month.
+    gold_sources:
+      - { source_id: "https://docs.example.com/billing", page: 1 }
+
+  - id: oos-001
+    question: What is the CEO's phone number?
+    kind: unanswerable
+    tags: [out-of-scope]
+
+  - id: pay-001
+    question: When is payment due?
+    kind: answerable
+    expected_answer: Within 14 days of the invoice date.
+    gold_sources:
+      - { source_id: "https://docs.example.com/billing", page: 2 }
+
+  - id: acc-001
+    question: How do I close my account?
+    kind: answerable
+    expected_answer: From the settings page, at any time.
+    # No page: this label matches on the URL alone, which is how a page-less
+    # source is labelled. `retrieval.matches` compares pages only when both
+    # sides have one.
+    gold_sources:
+      - { source_id: "https://docs.example.com/accounts" }
+
+  - id: oos-002
+    question: Can I pay in cryptocurrency?
+    kind: unanswerable
+    tags: [out-of-scope, near-miss]

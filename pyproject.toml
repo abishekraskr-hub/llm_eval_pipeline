@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm_eval_pipeline"
+# Read from llm_eval_pipeline/__init__.py, which is the single source of truth.
+# The version also feeds the baseline comparability hash, so it must not be
+# possible for the package metadata and the running code to disagree about it.
+dynamic = ["version"]
+description = "CI/CD for LLM applications: block a PR that makes answer quality worse."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["llm", "evaluation", "rag", "ci", "quality-gate", "deepeval"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Testing",
+]
+
+# Only what the library itself imports. Deliberately absent: chromadb,
+# streamlit, and every PDF library -- those belong to whichever app is under
+# test, and depending on them here would make this package only usable for apps
+# that happen to be built the same way.
+dependencies = [
+    "deepeval==4.3.4",
+    # The judge talks to any OpenAI-compatible endpoint, which is how one client
+    # covers both Groq and Gemini without a second SDK.
+    "openai==3.50.0",
+    "httpx2==2.16.0",
+    "psycopg[binary]==3.3.9",
+    "pydantic==2.14.3",
+    "python-dotenv==1.2.4",
+    "PyYAML==6.0.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.2.0"]
+
+[project.scripts]
+llmeval = "llm_eval_pipeline.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/abishekraskr-hub/llm_eval_pipeline"
+Issues = "https://github.com/abishekraskr-hub/llm_eval_pipeline/issues"
+
+[tool.setuptools.dynamic]
+version = { attr = "llm_eval_pipeline.__version__" }
+
+[tool.setuptools.packages.find]
+# `examples` and `tests` are shipped in the repo but are not importable
+# packages, so they are excluded from the wheel.
+include = ["llm_eval_pipeline*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --tb=short"

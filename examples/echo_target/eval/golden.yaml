@@ -1,0 +1,60 @@
+# The golden dataset: the fixed benchmark every run is scored against.
+#
+# Six items, 3 answerable and 3 unanswerable. Both kinds are REQUIRED for a
+# complete gate: the answerable ones measure faithfulness, relevance and
+# retrieval, and they are also where `false_refusal_rate` is measured; the
+# unanswerable ones are the only place `abstention_rate` can be measured.
+#
+# Gate one without the other and the pair means nothing -- an app that refuses
+# EVERYTHING scores a perfect 1.000 abstention rate while being useless.
+#
+# `--limit` takes the FIRST n items, so the two kinds are interleaved rather
+# than grouped. Grouping the unanswerable ones at the end would leave
+# abstention_rate unmeasured on any subset run, which FAILS the gate.
+items:
+  - id: exp-001
+    question: How long do expenses take to be reimbursed?
+    kind: answerable
+    expected_answer: Within 30 days of approval.
+    gold_sources:
+      - { source_id: handbook.md, page: 1 }
+    tags: [expenses]
+
+  - id: oos-001
+    question: What is the company's share price?
+    kind: unanswerable
+    expected_answer: Not covered by the available documents.
+    tags: [out-of-scope]
+
+  - id: leave-001
+    question: How much annual leave do I get, and can I carry it over?
+    kind: answerable
+    # Two gold locations: the question has two parts, and a complete answer
+    # needs both. This is what stops `recall@k` being the same as `hit_rate@k`.
+    expected_answer: 25 days plus public holidays, with up to 5 days carried over.
+    gold_sources:
+      - { source_id: policy.md, page: 1 }
+      - { source_id: policy.md, page: 3 }
+    tags: [leave]
+
+  - id: oos-002
+    question: Who won the football match last night?
+    kind: unanswerable
+    expected_answer: Not a company-policy question.
+    tags: [out-of-scope]
+
+  - id: travel-001
+    question: Do I need approval for travel?
+    kind: answerable
+    expected_answer: Yes, for travel over 500 km, in advance from your manager.
+    gold_sources:
+      - { source_id: handbook.md, page: 2 }
+    tags: [travel]
+
+  # A near miss: the right topic, in a document that does not cover this detail.
+  # Harder than a blatantly off-topic question, and the more realistic failure.
+  - id: oos-003
+    question: What is the daily meal allowance on a business trip?
+    kind: unanswerable
+    expected_answer: The documents mention travel approval but not meal allowances.
+    tags: [out-of-scope, near-miss]
