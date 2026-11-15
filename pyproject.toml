@@ -11,7 +11,9 @@ dynamic = ["version"]
 description = "CI/CD for LLM applications: block a PR that makes answer quality worse."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+# A plain SPDX string, not the deprecated table form: setuptools warns on the
+# table and drops support for it in Feb 2027.
+license = "MIT"
 keywords = ["llm", "evaluation", "rag", "ci", "quality-gate", "deepeval"]
 classifiers = [
     "Development Status :: 3 - Alpha",
