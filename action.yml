@@ -58,8 +58,12 @@ runs:
 
     - name: Restore the baseline run history
       shell: bash
+      # One `env:` per step. Two of them is not a merge -- GitHub rejects the
+      # whole manifest with "'env' is already defined" before any step runs, so
+      # the action is unusable rather than subtly wrong.
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        LLMEVAL_CONFIG: ${{ inputs.config }}
       # The paired gate compares this run to the last PASSING run on the base
       # branch, and that history lives in the SQLite file. A runner starts empty,
       # so without this every PR would report "no comparable baseline" forever.
@@ -101,8 +105,6 @@ runs:
         else
           echo "::notice::Run $run_id has no llmeval-history artifact (it may have expired)."
         fi
-      env:
-        LLMEVAL_CONFIG: ${{ inputs.config }}
 
     - name: Check the judge's API key is present
       shell: bash

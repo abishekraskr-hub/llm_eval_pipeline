@@ -7,7 +7,7 @@ config file and either a ~25-line adapter class or nothing at all if the app
 already speaks HTTP. You never edit library code.
 
 ```
-pip install "git+https://github.com/abishekraskr-hub/llm_eval_pipeline@v0.1.0"
+pip install "git+https://github.com/abishekraskr-hub/llm_eval_pipeline@v0.1.1"
 ```
 
 ## Quickstart
@@ -293,7 +293,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: pip install -r requirements.txt
-      - uses: abishekraskr-hub/llm_eval_pipeline@v0.1.0
+      - uses: abishekraskr-hub/llm_eval_pipeline@v0.1.1
         with:
           config: llmeval.yaml
         env:
@@ -330,7 +330,7 @@ is the default branch.
 Always pin a tag, never a branch:
 
 ```
-llm_eval_pipeline @ git+https://github.com/abishekraskr-hub/llm_eval_pipeline@v0.1.0
+llm_eval_pipeline @ git+https://github.com/abishekraskr-hub/llm_eval_pipeline@v0.1.1
 ```
 
 **The library version is part of the comparability hash.** An upgrade can change

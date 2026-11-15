@@ -10,4 +10,4 @@ nothing at all if the app already speaks HTTP.
 # here, and it feeds the baseline comparability hash: a library upgrade can
 # change how a metric is computed, so it must start a fresh baseline rather than
 # quietly compare numbers produced by different code.
-__version__ = "0.1.0"
+__version__ = "0.1.1"
